@@ -71,7 +71,7 @@ with st.expander("ℹ️ How to use this tool", expanded=False):
 **This tool generates an optimal weekly workforce assignment for Combibrug projects.**
 
 **Input files:**
-- **Staff file**: Contains employee information including contracted hours, eligibility, availability, and hourly rates.
+- **Staff template**: Contains employee information including contracted hours, eligibility, availability, and hourly rates.
 - **Project requirements**: Contains the active projects for the planning week, including required hours, headcount, scheduled days, and session times.
 
 **Steps:**
@@ -95,7 +95,7 @@ with st.expander("ℹ️ How to use this tool", expanded=False):
 
 # ── Step 2: Select planning week ─────────────────────────────
 st.header("2. Select planning week")
-planning_week = st.text_input("Planning week (ISO format, e.g. 2025-W1)", value="2025-W1")
+planning_week = st.text_input("Planning week (ISO format, e.g. 2025-W41)", value="2025-W1")
 
 # ── Step 3: Edit availability ────────────────────────────────
 st.header("3. Review & edit availability (hours/week)")
@@ -428,6 +428,19 @@ if st.button("Run MILP optimization", type="primary"):
 
     st.subheader("Table 2 — Employee summary")
     if not results.empty:
+        # Build days per employee from schedule_df
+        day_order = {d: i for i, d in enumerate(DAYS)}
+        if not schedule_df.empty:
+            days_per_emp = (
+                schedule_df.groupby("employee_id")["day"]
+                .apply(lambda x: ", ".join(
+                    sorted(x.unique(), key=lambda d: day_order.get(d, 99))))
+                .reset_index()
+                .rename(columns={"day": "days_assigned"})
+            )
+        else:
+            days_per_emp = pd.DataFrame(columns=["employee_id", "days_assigned"])
+
         emp_summary = results.groupby("employee_id").agg(
             role                    = ("role", "first"),
             worker_type             = ("worker_type", "first"),
@@ -436,8 +449,13 @@ if st.button("Run MILP optimization", type="primary"):
             contract_hours_per_week = ("contract_hours_per_week", "first"),
             total_cost_eur          = ("cost_eur", "sum")
         ).reset_index()
+        emp_summary = emp_summary.merge(days_per_emp, on="employee_id", how="left")
         emp_summary["total_hours"]    = emp_summary["total_hours"].round(1)
         emp_summary["total_cost_eur"] = emp_summary["total_cost_eur"].round(2)
+        # Reorder columns so days_assigned appears after projects
+        cols = ["employee_id", "role", "worker_type", "projects", "days_assigned",
+                "total_hours", "contract_hours_per_week", "total_cost_eur"]
+        emp_summary = emp_summary[[c for c in cols if c in emp_summary.columns]]
         st.dataframe(emp_summary, use_container_width=True)
     else:
         st.warning("No assignments found.")
